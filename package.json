@@ -1,0 +1,60 @@
+{
+  "name": "dsh-market-watching",
+  "version": "0.1.0",
+  "description": "DSH 侧边栏行情卡片：加密货币、A股/港股/美股、国际指数、CME 期货连续、外汇、现货金银的价格与涨跌幅，可按成本价算持仓盈亏，标的在设置页自选，无需登录与密钥",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ticker",
+    "market",
+    "stock",
+    "crypto",
+    "forex",
+    "行情"
+  ],
+  "license": "MIT",
+  "author": "Leni-More",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Leni-More/dsh-market-watching.git"
+  },
+  "homepage": "https://github.com/Leni-More/dsh-market-watching#readme",
+  "bugs": {
+    "url": "https://github.com/Leni-More/dsh-market-watching/issues"
+  },
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "http.mjs",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "docs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

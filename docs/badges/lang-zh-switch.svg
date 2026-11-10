@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="118" height="20" role="img" aria-label="language: 简体中文">
+  <title>language: 简体中文</title>
+  <rect width="62" height="20" fill="#555"/>
+  <rect x="62" width="56" height="20" fill="#8b949e"/>
+  <g font-family="Verdana,Geneva,'DejaVu Sans',sans-serif" font-size="11" text-anchor="middle" fill="#010101" fill-opacity=".3">
+    <text x="31" y="15">language</text>
+    <text x="90" y="15">简体中文</text>
+  </g>
+  <g font-family="Verdana,Geneva,'DejaVu Sans',sans-serif" font-size="11" text-anchor="middle" fill="#ffffff">
+    <text x="31" y="14">language</text>
+    <text x="90" y="14">简体中文</text>
+  </g>
+</svg>
