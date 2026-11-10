@@ -78,29 +78,21 @@ English:
 
 ## 安装
 
-插件通过 profile 装配，两步：
+用 DSH 自带的插件命令，一条就够——它把参数原样转发给 profile 目录里的 pnpm。
 
-1. 在 `%USERPROFILE%\.dsh\profiles\desktop\package.json` 的 `dependencies` 增加：
+桌面版（`desktop` profile）：
 
-   ```json
-   "dsh-market-watching": "file:E:/LLm/Project/dsh-market-watching"
-   ```
+```powershell
+dsh plugin --profile desktop add dsh-market-watching
+```
 
-2. 同一个 `package.json` 的 `dsh.profile.bundles` 数组末尾增加：
+Web 版（`web` profile）：
 
-   ```json
-   "dsh-market-watching"
-   ```
+```powershell
+dsh plugin --profile web add dsh-market-watching
+```
 
-3. 在 profile 目录下建立包链接（Windows 用 junction 即可）：
-
-   ```powershell
-   New-Item -ItemType Junction `
-     -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-market-watching" `
-     -Target "E:\LLm\Project\dsh-market-watching"
-   ```
-
-4. **重启 DeepSeek Harness 桌面应用**。宿主插件（`index.js`）只在进程启动时装配；客户端 `client.js` 由页面加载时注入。
+装完重启对应进程才算数：桌面版关掉重开 DeepSeek Harness（宿主 `index.js` 只在进程启动时装配），Web 版重启 `dsh web`。客户端 `client.js` 是页面加载时注入的，刷新一次就换。
 
 ## 使用
 
@@ -188,7 +180,7 @@ node scripts/probe-ticker.mjs # 打一次 ticker 路由，打印真实报价与�
 
 ## 故障排查
 
-- **侧栏没有卡片**：先看设置里的总开关是不是被关了；再确认至少有一个标的；再确认 `%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-market-watching` 这个 junction 存在且指向源码目录；最后重启桌面应用。
+- **侧栏没有卡片**：先看设置里的总开关是不是被关了；再确认至少有一个标的；再确认包装进了当前 profile（`dsh plugin --profile desktop why dsh-market-watching`）；最后重启对应进程。
 - **卡片显示 `--`**：上游不通。检查网络能否直连 `push2.eastmoney.com`、`api.gateio.ws` 与 `hq.sinajs.cn`；若走代理，在 `config.proxy` 填上代理地址（新浪那一路在配置代理后也走同一客户端，若被拦就把代理关掉或改用直连）。
 - **添加标的被拒**：说明宿主用报价接口探测不到该代码，换个写法（A 股带市场前缀、指数写完整 secid）。
 - **文案全是英文**：界面语言跟着 DSH 走，去 DSH 自己的语言设置里切成中文即可，改完即时生效，不用重启。
@@ -196,7 +188,11 @@ node scripts/probe-ticker.mjs # 打一次 ticker 路由，打印真实报价与�
 
 ## 卸载
 
-删掉 profile `package.json` 里加的两处、删除 junction、重启桌面应用。设置文件 `%USERPROFILE%\.dsh\dsh-market-watching.json` 可一并删除。
+```powershell
+dsh plugin --profile desktop remove dsh-market-watching
+```
+
+Web 版就把 `--profile desktop` 换成 `--profile web`。卸完重启对应进程。设置文件 `%USERPROFILE%\.dsh\dsh-market-watching.json` 可以留着（重装后接着用），也可以直接删。
 
 ## License
 

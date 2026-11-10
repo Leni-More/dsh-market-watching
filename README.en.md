@@ -65,29 +65,23 @@ All of these are public quote endpoints — no account, no token, no auth. Every
 
 ## Install
 
-The plugin is wired in through the profile, in two edits:
+Use the DSH plugin command. It forwards its arguments verbatim to pnpm inside the profile directory, so one line does the whole install.
 
-1. Add to `dependencies` in `%USERPROFILE%\.dsh\profiles\desktop\package.json`:
+Desktop (`desktop` profile):
 
-   ```json
-   "dsh-market-watching": "file:E:/LLm/Project/dsh-market-watching"
-   ```
+```powershell
+dsh plugin --profile desktop add dsh-market-watching
+```
 
-2. Append to the `dsh.profile.bundles` array in the same `package.json`:
+Web (`web` profile):
 
-   ```json
-   "dsh-market-watching"
-   ```
+```powershell
+dsh plugin --profile web add dsh-market-watching
+```
 
-3. Link the package into the profile's `node_modules` (a Windows junction is enough):
+Restart the process afterwards: close and reopen the DeepSeek Harness desktop app (the host half `index.js` is only assembled at process start), or restart `dsh web` for the web profile. The client half `client.js` is injected when the page loads, so a refresh picks it up.
 
-   ```powershell
-   New-Item -ItemType Junction `
-     -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-market-watching" `
-     -Target "E:\LLm\Project\dsh-market-watching"
-   ```
 
-4. **Restart the DeepSeek Harness desktop app.** The host half (`index.js`) is only assembled at process start; the client half (`client.js`) is injected when the page loads.
 
 ## Usage
 
@@ -175,7 +169,7 @@ node scripts/probe-ticker.mjs # hit the ticker route once, print real quotes and
 
 ## Troubleshooting
 
-- **No card in the sidebar**: first check whether the master switch in settings is off; then that at least one instrument exists; then that `%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-market-watching` exists as a junction pointing at the source directory; finally restart the desktop app.
+- **No card in the sidebar**: first check whether the master switch in settings is off; then that at least one instrument exists; then that the package is installed in the current profile (`dsh plugin --profile desktop why dsh-market-watching`); finally restart the process.
 - **Card shows `--`**: upstreams are unreachable. Check that the machine can reach `push2.eastmoney.com`, `api.gateio.ws` and `hq.sinajs.cn` directly; behind a proxy, put the proxy address in `config.proxy` (the Sina path then uses the same client, so if it is blocked, drop the proxy or go direct).
 - **A symbol is rejected**: the host could not get a quote for that code. Try another form (market prefix for A-shares, a full secid for indices).
 - **All copy is English**: interface language follows DSH — switch it to Chinese in DSH's own language setting. Takes effect immediately, no restart.
@@ -183,7 +177,11 @@ node scripts/probe-ticker.mjs # hit the ticker route once, print real quotes and
 
 ## Uninstall
 
-Remove the two edits from the profile `package.json`, delete the junction, restart the desktop app. The settings file `%USERPROFILE%\.dsh\dsh-market-watching.json` can go too.
+```powershell
+dsh plugin --profile desktop remove dsh-market-watching
+```
+
+For the web profile, swap `--profile desktop` for `--profile web`. Restart the process afterwards. The settings file `%USERPROFILE%\.dsh\dsh-market-watching.json` can stay (it is reused on reinstall) or be deleted.
 
 ## License
 
