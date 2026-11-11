@@ -4,14 +4,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'market-watching-test-'))
 
-const { apply, candidatesFor, installStamp, normalizeItem, normalizeQty, normalizeSettings, noticeDecision, positionAmount, positionPnl } = await import('../index.js')
+const { apply, candidatesFor, normalizeItem, normalizeQty, normalizeSettings, noticeDecision, positionAmount, positionPnl } = await import('../index.js')
 
 /** Collect every route the plugin registers against a fake connection. */
 function boot(config = {}) {
@@ -354,7 +354,7 @@ test('an old dsh-market-ticker.json is adopted under the new file name', async (
   }
 })
 
-test('the thank-you card greets each installed copy once', async () => {
+test('the thank-you card greets one activation exactly once', async () => {
   const home = mkdtempSync(join(tmpdir(), 'market-watching-notice-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = home
@@ -362,15 +362,15 @@ test('the thank-you card greets each installed copy once', async () => {
     const routes = boot()
     const first = await call(routes, '/api/market.notice')
     assert.equal(first.body.show, true)
-    assert.equal(first.body.reason, 'installed')
+    assert.equal(first.body.reason, 'activation')
 
-    // A reload inside the throttle window is answered from memory: same verdict.
+    // The greeting is spent: a reload, or a second tab, is told no.
     const reload = await call(routes, '/api/market.notice')
-    assert.equal(reload.body.show, true)
+    assert.equal(reload.body.show, false)
+    assert.equal(reload.body.reason, 'greeted')
 
-    const stored = JSON.parse(await readFile(join(home, 'dsh-market-watching.notice.json'), 'utf8'))
-    assert.equal(stored.install, installStamp())
-    assert.ok(stored.shownAt > 0)
+    // Nothing about the card touches disk; a file would outlive the install.
+    assert.equal(existsSync(join(home, 'dsh-market-watching.notice.json')), false)
 
     const answered = await call(routes, '/api/market.notice', {
       method: 'POST',
@@ -380,10 +380,10 @@ test('the thank-you card greets each installed copy once', async () => {
     assert.equal(answered.status, 200)
     assert.equal(answered.body.closed, 'thanks')
 
-    // A restart reads the file and stays quiet: this copy has been greeted.
-    const restarted = await call(boot(), '/api/market.notice')
-    assert.equal(restarted.body.show, false)
-    assert.equal(restarted.body.reason, 'asked')
+    // Reloading the plug-in is a new activation, so the card is offered again.
+    const reactivated = await call(boot(), '/api/market.notice')
+    assert.equal(reactivated.body.show, true)
+    assert.equal(reactivated.body.reason, 'activation')
   } finally {
     process.env.DSH_HOME = previous
   }
@@ -423,20 +423,7 @@ test('the notice route rejects answers it cannot understand', async () => {
   }
 })
 
-test('noticeDecision greets one installed copy', () => {
-  const now = 1_700_000_000_000
-  assert.deepEqual(noticeDecision({ version: 3, install: '', shownAt: 0, closed: null }, 'copy-a'), {
-    show: true,
-    reason: 'installed',
-  })
-  // A record from another copy — an older install, or a fresh directory — is due.
-  assert.deepEqual(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: null }, 'copy-b'), {
-    show: true,
-    reason: 'installed',
-  })
-  // The copy the file already greeted stays quiet, whatever the reader answered.
-  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: null }, 'copy-a').show, false)
-  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: 'issue' }, 'copy-a').show, false)
-  // Nothing is remembered about a copy that was never greeted.
-  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: 0, closed: null }, 'copy-a').show, true)
+test('noticeDecision spends one greeting per activation', () => {
+  assert.deepEqual(noticeDecision(false), { show: true, reason: 'activation' })
+  assert.deepEqual(noticeDecision(true), { show: false, reason: 'greeted' })
 })

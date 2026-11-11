@@ -153,7 +153,7 @@ dsh plugin --profile web add dsh-market-watching
 
 设置落盘在 `$DSH_HOME/dsh-market-watching.json`（默认 `%USERPROFILE%\.dsh\dsh-market-watching.json`）。插件改名前叫 `dsh-plugin-market-ticker`，旧文件 `dsh-market-ticker.json` 会在首次启动时被自动接管，原文件保留不删。
 
-道谢卡片的状态单独落在 `$DSH_HOME/dsh-market-watching.notice.json`，不写进设置文件：设置每次读写都会被规范化，未知字段留不住，用户一存自选就会把状态洗掉。卡片只在你装好之后第一次打开页面时出现一次 —— 文件里记的是「已经问候过哪一份安装」（安装目录的创建时间），不是次数配额；重新安装是新的目录，会再问候一次，而原地升级不会。
+道谢卡片不再往磁盘写任何东西：它的状态只活在宿主进程里。宿主每次启动、或每次启用本插件时都会发放一张卡片 —— 第一个打开的页面看到它，之后的刷新和第二个标签页都不会再弹，直到下一次启用。
 
 ## 工作方式
 

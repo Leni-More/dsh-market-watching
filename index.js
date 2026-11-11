@@ -22,10 +22,9 @@
  * good quote, which the browser half renders as stale instead of hiding.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { fileURLToPath } from 'node:url'
 
 import { httpsGet } from './http.mjs'
 
@@ -59,28 +58,14 @@ const LEGACY_SETTINGS_FILENAME = 'dsh-market-ticker.json'
 const SETTINGS_VERSION = 1
 
 /**
- * Thank-you card bookkeeping.
+ * Thank-you card policy.
  *
- * This lives beside the settings document rather than inside it: settings are
- * normalized on every read and write, so an unknown field would be dropped the
- * moment the operator saved the watchlist.
+ * The host is the only party that knows what an activation is — it applies the
+ * plug-in on every launch and every time the plug-in is switched on — so the
+ * whole decision is one flag in {@link apply}'s closure. Nothing is stored:
+ * a record on disk outlives the install that wrote it, which is how a freshly
+ * reinstalled plug-in ended up silent.
  */
-const NOTICE_FILENAME = 'dsh-market-watching.notice.json'
-
-/**
- * Bumped only when the stored notice shape changes incompatibly, and a record
- * from an older version is dropped. Version 2 still asked on every page load;
- * version 3 greets one installed copy exactly once.
- */
-const NOTICE_VERSION = 3
-
-/**
- * The browser asks on every page load, but only the first answer of an
- * installation is a "yes". Answers inside this window are served from memory so
- * a reload storm cannot race two writes.
- */
-const NOTICE_THROTTLE_MS = 30 * 1000
-
 /** An answer body is a single short action, never a payload. */
 const NOTICE_MAX_BODY = 2048
 
@@ -572,102 +557,19 @@ function writeSettings(path, settings, log) {
  * -------------------------------------------------------------------------- */
 
 /**
- * Absolute path of this plugin's own directory: the module that runs is at the
- * package root, so `import.meta.url` names the installed copy itself.
- * @returns the directory the operator installed.
- */
-function packageRoot() {
-  return dirname(fileURLToPath(import.meta.url))
-}
-
-/**
- * A token that changes when the plugin is installed, and only then.
- *
- * Directory birth time is the honest signal: npm and pnpm build a fresh
- * directory for a new copy, while an in-place change to the same copy leaves the
- * directory alone. Some filesystems report no birth time, so the directory's
- * `mtime` is the fallback — still per-copy rather than per-load.
- * @param root - the installed package directory.
- * @returns a stable string for this copy.
- */
-export function installStamp(root = packageRoot()) {
-  try {
-    const stats = statSync(root)
-    return `${Math.trunc(stats.birthtimeMs || stats.mtimeMs)}`
-  } catch {
-    /* An unreadable directory means "cannot tell"; greet once, quietly. */
-    return 'unknown'
-  }
-}
-
-/**
- * Shape written before anything has been shown.
- * @returns a fresh notice document.
- */
-function emptyNotice() {
-  return { version: NOTICE_VERSION, install: '', shownAt: 0, closed: null }
-}
-
-/**
- * Read the notice document, tolerating anything on disk.
- *
- * The card is decoration: a corrupt or hand-edited file must degrade to "greet
- * this copy once", never to a crash on startup.
- * @param path - absolute path of the document.
- * @param log - warning sink for an unreadable file.
- * @returns always a complete notice document.
- */
-function readNotice(path, log) {
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8'))
-    if (parsed?.version !== NOTICE_VERSION) return emptyNotice()
-    return {
-      version: NOTICE_VERSION,
-      install: typeof parsed.install === 'string' ? parsed.install : '',
-      shownAt: Number.isFinite(parsed.shownAt) && parsed.shownAt >= 0 ? parsed.shownAt : 0,
-      closed: NOTICE_FINAL.has(parsed?.closed) ? parsed.closed : null,
-    }
-  } catch (error) {
-    if (error.code !== 'ENOENT') log.warn(`${LOG_PREFIX} ignoring ${path}: ${String(error.message ?? error)}`)
-    return emptyNotice()
-  }
-}
-
-/**
- * Persist the notice document atomically, matching the settings writer.
- * @param path - absolute path of the document.
- * @param notice - already-normalized notice document.
- * @param log - warning sink for a failed write.
- * @returns true when the document reached disk.
- */
-function writeNotice(path, notice, log) {
-  try {
-    mkdirSync(dirname(path), { recursive: true })
-    const staged = `${path}.tmp`
-    writeFileSync(staged, `${JSON.stringify(notice, null, 2)}\n`)
-    renameSync(staged, path)
-    return true
-  } catch (error) {
-    log.warn(`${LOG_PREFIX} cannot write ${path}: ${String(error.message ?? error)}`)
-    return false
-  }
-}
-
-/**
  * Decide whether the card is due, and say why.
  *
- * The rule is one greeting per installed copy, so the only question is whether
- * this copy is the one the file already greeted. Nothing counts, nothing cools
- * down: a budget kept in a file outlives the plugin it belongs to, which is how
- * a freshly reinstalled copy ended up silent.
- * @param notice - stored notice document.
- * @param install - stamp of the copy that is running.
+ * The host is the only party that knows what an activation is — it applies the
+ * plug-in on every launch and every time the plug-in is switched on — so the
+ * whole decision is one in-process flag. Nothing is counted, nothing is stored:
+ * a record on disk outlives the install that wrote it, which is how a freshly
+ * reinstalled plug-in ended up silent.
+ * @param greeted - whether this activation has already produced the card.
  * @returns `{ show, reason }` with a stable reason string.
  */
-export function noticeDecision(notice, install = installStamp()) {
-  if (!notice || typeof notice !== 'object') return { show: false, reason: 'missing' }
-  if (notice.install === install && notice.shownAt > 0) return { show: false, reason: 'asked' }
-  return { show: true, reason: 'installed' }
+export function noticeDecision(greeted) {
+  if (greeted) return { show: false, reason: 'greeted' }
+  return { show: true, reason: 'activation' }
 }
 
 /* -------------------------------------------------------------------------- *
@@ -881,13 +783,10 @@ export function apply(ctx, config = {}) {
   const cacheMs = Number.isFinite(config.cacheMs) && config.cacheMs >= 0 ? config.cacheMs : DEFAULTS.cacheMs
   const settingsPath = join(harnessHome(), SETTINGS_FILENAME)
   const legacySettingsPath = join(harnessHome(), LEGACY_SETTINGS_FILENAME)
-  const noticePath = join(harnessHome(), NOTICE_FILENAME)
-
-  let notice = readNotice(noticePath, log)
-  /** Which copy this process runs, read once: it cannot change while alive. */
-  const install = installStamp()
-  /** Last decision served, so reloads inside the throttle window cannot race writes. */
-  let noticeAnswer
+  /** Whether this activation has already handed out the card. */
+  let greeted = false
+  /** What the operator did with it, kept only to answer the next question. */
+  let noticeClosed = null
 
   let settings = readSettings(settingsPath, log)
   if (!existsSync(settingsPath) && existsSync(legacySettingsPath)) {
@@ -1142,19 +1041,9 @@ export function apply(ctx, config = {}) {
     requestBody: 'buffered',
     fetch: async (request) => {
       if (request.method !== 'POST') {
-        const now = Date.now()
-        if (noticeAnswer !== undefined && now - noticeAnswer.at < NOTICE_THROTTLE_MS) {
-          return jsonResponse(noticeAnswer.body)
-        }
-        const decision = noticeDecision(notice, install)
-        let body
-        if (decision.show) {
-          notice = { ...notice, install, shownAt: now }
-          writeNotice(noticePath, notice, log)
-        }
-        body = { ok: true, show: decision.show, reason: decision.reason }
-        noticeAnswer = { at: now, body }
-        return jsonResponse(body)
+        const decision = noticeDecision(greeted)
+        if (decision.show) greeted = true
+        return jsonResponse({ ok: true, show: decision.show, reason: decision.reason })
       }
 
       // The body is one short action, so it is read as text and bounded before parsing.
@@ -1179,12 +1068,9 @@ export function apply(ctx, config = {}) {
       }
 
       // Both link clicks are remembered only as a diagnostic; the greeting itself
-      // is already spent by the GET that painted the card.
-      notice = NOTICE_FINAL.has(action) ? { ...notice, closed: action } : notice
-      if (!writeNotice(noticePath, notice, log)) {
-        return jsonResponse({ ok: false, code: 'writeFailed', message: '状态写入失败，请检查 DSH_HOME 权限' }, 500)
-      }
-      return jsonResponse({ ok: true, closed: notice.closed })
+      // was already spent by the GET that painted the card.
+      if (NOTICE_FINAL.has(action)) noticeClosed = action
+      return jsonResponse({ ok: true, closed: noticeClosed })
     },
   })
 }

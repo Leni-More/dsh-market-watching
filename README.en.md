@@ -142,7 +142,7 @@ The `config` block in `cordis.patch.yml` overrides these defaults (a profile pat
 
 Settings persist to `$DSH_HOME/dsh-market-watching.json` (default `%USERPROFILE%\.dsh\dsh-market-watching.json`). The plugin used to be called `dsh-plugin-market-ticker`; its old file `dsh-market-ticker.json` is adopted automatically on first start and left in place.
 
-The card keeps its own state in `$DSH_HOME/dsh-market-watching.notice.json` rather than inside the settings document: settings are normalized on every read and write, so an unknown field would be dropped the moment the watchlist is saved. The card appears once, on the first page load after installation. What the file records is *which* copy has been greeted — the creation time of the package directory — not a counter: reinstalling is a new directory and earns one more greeting, while an in-place upgrade stays silent.
+The thank-you card writes nothing to disk: its state lives only in the host process. The host hands out one card each time it starts and each time the plug-in is switched on — the first page that opens sees it, later reloads and second tabs do not, and the next activation starts over.
 
 ## How it works
 
