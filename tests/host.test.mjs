@@ -11,7 +11,7 @@ import { join } from 'node:path'
 
 process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'market-watching-test-'))
 
-const { apply, candidatesFor, normalizeItem, normalizeQty, normalizeSettings, positionAmount, positionPnl } = await import('../index.js')
+const { apply, candidatesFor, normalizeItem, normalizeQty, normalizeSettings, noticeDecision, positionAmount, positionPnl } = await import('../index.js')
 
 /** Collect every route the plugin registers against a fake connection. */
 function boot(config = {}) {
@@ -352,4 +352,91 @@ test('an old dsh-market-ticker.json is adopted under the new file name', async (
   } finally {
     process.env.DSH_HOME = previous
   }
+})
+
+test('the thank-you card is offered once, then remembers the answer', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'market-watching-notice-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const routes = boot()
+    const first = await call(routes, '/api/market.notice')
+    assert.equal(first.body.show, true)
+    assert.equal(first.body.reason, 'first')
+    assert.equal(first.body.shows, 1)
+
+    // A reload inside the throttle window is answered from memory, so it cannot
+    // spend a second show.
+    const reload = await call(routes, '/api/market.notice')
+    assert.equal(reload.body.shows, 1)
+
+    const stored = JSON.parse(await readFile(join(home, 'dsh-market-watching.notice.json'), 'utf8'))
+    assert.equal(stored.shows, 1)
+
+    const answered = await call(routes, '/api/market.notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'thanks' }),
+    })
+    assert.equal(answered.status, 200)
+    assert.equal(answered.body.closed, 'thanks')
+
+    const after = await call(routes, '/api/market.notice')
+    assert.equal(after.body.show, false)
+    assert.equal(after.body.reason, 'answered')
+
+    // A restart reads the file, so the answer outlives the process.
+    const restarted = await call(boot(), '/api/market.notice')
+    assert.equal(restarted.body.show, false)
+    assert.equal(restarted.body.reason, 'answered')
+  } finally {
+    process.env.DSH_HOME = previous
+  }
+})
+
+test('the notice route rejects answers it cannot understand', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'market-watching-notice-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const routes = boot()
+    const unknown = await call(routes, '/api/market.notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'starred' }),
+    })
+    assert.equal(unknown.status, 400)
+    assert.equal(unknown.body.code, 'badAction')
+
+    const broken = await call(routes, '/api/market.notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{',
+    })
+    assert.equal(broken.status, 400)
+    assert.equal(broken.body.code, 'badJson')
+
+    // The body is one short action; anything larger is refused before parsing.
+    const huge = await call(routes, '/api/market.notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'later', pad: 'x'.repeat(4096) }),
+    })
+    assert.equal(huge.status, 413)
+  } finally {
+    process.env.DSH_HOME = previous
+  }
+})
+
+test('noticeDecision stops at the show budget and restarts after a cooldown', () => {
+  const now = 1_700_000_000_000
+  const day = 24 * 60 * 60 * 1000
+  assert.deepEqual(noticeDecision({ shows: 0, lastAt: 0, closed: null }, now), { show: true, reason: 'first' })
+  assert.deepEqual(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: null }, now), { show: true, reason: 'again' })
+  assert.deepEqual(noticeDecision({ shows: 2, lastAt: now - 8 * day, closed: null }, now), { show: true, reason: 'again' })
+  assert.equal(noticeDecision({ shows: 1, lastAt: now - 1000, closed: null }, now).reason, 'cooling')
+  // The spent budget outranks the cooldown, so the reason does not flip on reload.
+  assert.equal(noticeDecision({ shows: 3, lastAt: now, closed: null }, now).reason, 'capped')
+  assert.equal(noticeDecision({ shows: 1, lastAt: 0, closed: 'issue' }, now).reason, 'answered')
+  assert.equal(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: 'thanks' }, now).reason, 'answered')
 })

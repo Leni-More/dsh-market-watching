@@ -3,6 +3,8 @@
 DSH 侧栏行情卡片：加密货币、A股 / 港股 / 美股、国际指数、CME 期货连续合约、外汇、现货金银，实时价格与涨跌幅一览，还能按自己填的成本价算持仓盈亏。标的、顺序、刷新节奏全在 **DSH 设置页**里定，**无需登录、无需 API Key**，界面文案跟随 DSH 的界面语言（中文 / 英文）。
 
 <p align="center">
+  <img src="icon.svg" alt="dsh-market-watching" width="72" height="72">
+  <br>
   <img src="docs/badges/lang-zh-current.svg" alt="简体中文" height="20">
   &nbsp;
   <a href="README.en.md"><img src="docs/badges/lang-en-switch.svg" alt="English" height="20"></a>
@@ -147,12 +149,15 @@ dsh plugin --profile web add dsh-market-watching
 | `/api/market.ticker` | GET / POST | 当前标的的报价快照；`?refresh=1` 强制绕过缓存 |
 | `/api/market.settings` | GET / POST | 读写设置 |
 | `/api/market.resolve` | POST | 代码解析与校验（返回候选与官方名称） |
+| `/api/market.notice` | GET / POST | 是否该弹出道谢卡片（GET），以及记录用户的选择（POST `thanks` / `issue` / `later`） |
 
 设置落盘在 `$DSH_HOME/dsh-market-watching.json`（默认 `%USERPROFILE%\.dsh\dsh-market-watching.json`）。插件改名前叫 `dsh-plugin-market-ticker`，旧文件 `dsh-market-ticker.json` 会在首次启动时被自动接管，原文件保留不删。
 
+道谢卡片的计数单独落在 `$DSH_HOME/dsh-market-watching.notice.json`，不写进设置文件：设置每次读写都会被规范化，未知字段留不住，用户一存自选就会把计数洗掉。
+
 ## 工作方式
 
-- **宿主侧**（`index.js`）：`inject = ['connection']`，用 `ctx.connection.fetch.register` 注册三条精确路由。内部把标的按市场分组，股票/指数/外汇合并成一次东财 `ulist` 批量请求（每批 40 个 secid），加密逐个走 Gate，现货金属合并成一次新浪批次请求。带 `cacheMs` 缓存与 `inflight` 去重，上游整体失败时返回 `degraded: true` 并沿用 `lastGood` 里的上一次报价（`stale: true`），不会把卡片打空。持仓盈亏由宿主算：`positionPnl(entry, price)` 出百分比（多头 `(现价-成本)/成本`，空头取反），`positionAmount(entry, qty, price)` 出金额（价格差 × 数量，空头取反），分别以 `pnlPercent` / `pnlAmount` 下发，客户端只负责显示。错误响应除 `message` 外还带 `code`（`badJson` / `writeFailed` / `unknownCode` / `noQuote`），供客户端按当前语言重新渲染。
+- **宿主侧**（`index.js`）：`inject = ['connection']`，用 `ctx.connection.fetch.register` 注册四条精确路由。内部把标的按市场分组，股票/指数/外汇合并成一次东财 `ulist` 批量请求（每批 40 个 secid），加密逐个走 Gate，现货金属合并成一次新浪批次请求。带 `cacheMs` 缓存与 `inflight` 去重，上游整体失败时返回 `degraded: true` 并沿用 `lastGood` 里的上一次报价（`stale: true`），不会把卡片打空。持仓盈亏由宿主算：`positionPnl(entry, price)` 出百分比（多头 `(现价-成本)/成本`，空头取反），`positionAmount(entry, qty, price)` 出金额（价格差 × 数量，空头取反），分别以 `pnlPercent` / `pnlAmount` 下发，客户端只负责显示。错误响应除 `message` 外还带 `code`（`badJson` / `writeFailed` / `unknownCode` / `noQuote`），供客户端按当前语言重新渲染。
 - **客户端侧**（`client.js`）：`inject = ['slots', 'locale']`，注册 `sidebar.footer.action`（卡片）、`settings.section`（设置页）、`settings.section.icon`（导航图标）。样式只用 `--dsw-alias-*` 主题 token，跟随深浅色主题。
 
 ## 语言

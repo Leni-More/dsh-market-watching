@@ -3,6 +3,8 @@
 A market card for the DSH sidebar: crypto, A-shares / HK / US equities, global indices, CME futures continuous contracts, FX and spot metals — live prices, daily change, plus position P&L against your own cost basis. Pick the symbols, their order and the refresh cadence in **DSH Settings**. **No login, no API key.** The UI copy follows the DSH interface language (English / Chinese).
 
 <p align="center">
+  <img src="icon.svg" alt="dsh-market-watching" width="72" height="72">
+  <br>
   <a href="README.md"><img src="docs/badges/lang-zh-switch.svg" alt="简体中文" height="20"></a>
   &nbsp;
   <img src="docs/badges/lang-en-current.svg" alt="English" height="20">
@@ -136,12 +138,15 @@ The `config` block in `cordis.patch.yml` overrides these defaults (a profile pat
 | `/api/market.ticker` | GET / POST | Quote snapshot for the current watchlist; `?refresh=1` bypasses the cache |
 | `/api/market.settings` | GET / POST | Read and write settings |
 | `/api/market.resolve` | POST | Code resolution and validation (returns candidates and official names) |
+| `/api/market.notice` | GET / POST | Whether the thank-you card is due (GET) and what the operator chose (POST `thanks` / `issue` / `later`) |
 
 Settings persist to `$DSH_HOME/dsh-market-watching.json` (default `%USERPROFILE%\.dsh\dsh-market-watching.json`). The plugin used to be called `dsh-plugin-market-ticker`; its old file `dsh-market-ticker.json` is adopted automatically on first start and left in place.
 
+The card keeps its own counter in `$DSH_HOME/dsh-market-watching.notice.json` rather than inside the settings document: settings are normalized on every read and write, so an unknown field would be dropped the moment the watchlist is saved.
+
 ## How it works
 
-- **Host side** (`index.js`): `inject = ['connection']`, and `ctx.connection.fetch.register` installs three exact routes. Inside, instruments are grouped by market: equities / indices / FX merge into one East Money `ulist` batch (40 secids per batch), crypto goes to Gate pair by pair, spot metals merge into one Sina batch. A `cacheMs` cache and `inflight` de-duplication sit in front, and when every upstream fails the response is `degraded: true` with the previous quotes from `lastGood` (`stale: true`), so the card never goes blank. Position maths runs on the host: `positionPnl(entry, price)` yields the percentage (long `(price - cost) / cost`, inverted for shorts) and `positionAmount(entry, qty, price)` yields the cash amount (price delta × quantity, inverted for shorts), shipped as `pnlPercent` / `pnlAmount`; the client only renders them. Error responses carry a `code` (`badJson` / `writeFailed` / `unknownCode` / `noQuote`) next to `message`, so the client can re-render the text in the current language.
+- **Host side** (`index.js`): `inject = ['connection']`, and `ctx.connection.fetch.register` installs four exact routes. Inside, instruments are grouped by market: equities / indices / FX merge into one East Money `ulist` batch (40 secids per batch), crypto goes to Gate pair by pair, spot metals merge into one Sina batch. A `cacheMs` cache and `inflight` de-duplication sit in front, and when every upstream fails the response is `degraded: true` with the previous quotes from `lastGood` (`stale: true`), so the card never goes blank. Position maths runs on the host: `positionPnl(entry, price)` yields the percentage (long `(price - cost) / cost`, inverted for shorts) and `positionAmount(entry, qty, price)` yields the cash amount (price delta × quantity, inverted for shorts), shipped as `pnlPercent` / `pnlAmount`; the client only renders them. Error responses carry a `code` (`badJson` / `writeFailed` / `unknownCode` / `noQuote`) next to `message`, so the client can re-render the text in the current language.
 - **Client side** (`client.js`): `inject = ['slots', 'locale']`, registering `sidebar.footer.action` (the card), `settings.section` (the settings page) and `settings.section.icon` (the nav icon). Styling uses `--dsw-alias-*` theme tokens only, so it follows light and dark themes.
 
 ## Language

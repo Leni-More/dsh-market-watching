@@ -37,6 +37,9 @@ export const SETTINGS_PATH = '/api/market.settings'
 /** Route that validates one operator-typed code before it joins the watchlist. */
 export const RESOLVE_PATH = '/api/market.resolve'
 
+/** Route that decides whether the post-install thank-you card is due. */
+export const NOTICE_PATH = '/api/market.notice'
+
 /** Connection owns the `/api` channel; its exact Fetch registry carries these routes. */
 export const inject = ['connection']
 
@@ -53,6 +56,39 @@ const LEGACY_SETTINGS_FILENAME = 'dsh-market-ticker.json'
 
 /** Bumped only when the stored shape changes incompatibly. */
 const SETTINGS_VERSION = 1
+
+/**
+ * Thank-you card bookkeeping.
+ *
+ * This lives beside the settings document rather than inside it: settings are
+ * normalized on every read and write, so an unknown field would be dropped the
+ * moment the operator saved the watchlist.
+ */
+const NOTICE_FILENAME = 'dsh-market-watching.notice.json'
+
+/** Bumped only when the stored notice shape changes incompatibly. */
+const NOTICE_VERSION = 1
+
+/** How many times one installation may ever see the card. */
+const NOTICE_MAX_SHOWS = 3
+
+/** Quiet window after a "later", so the card never becomes a nag. */
+const NOTICE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * The browser asks once per page load; a reload storm must not burn through the
+ * show budget, so two answers inside this window are served from memory.
+ */
+const NOTICE_THROTTLE_MS = 30 * 1000
+
+/** An answer body is a single short action, never a payload. */
+const NOTICE_MAX_BODY = 2048
+
+/** Answers that mean "do not ask again", as opposed to "not now". */
+const NOTICE_FINAL = new Set(['thanks', 'issue'])
+
+/** Every answer the card can send back. */
+const NOTICE_ACTIONS = new Set(['thanks', 'issue', 'later'])
 
 /**
  * Upper bound on the watchlist. The sidebar card is the constraint, not the
@@ -532,6 +568,78 @@ function writeSettings(path, settings, log) {
 }
 
 /* -------------------------------------------------------------------------- *
+ * thank-you card
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Shape written before anything has been shown, so the first decision is a
+ * plain `shows === 0` read instead of a special case.
+ * @returns a fresh notice document.
+ */
+function emptyNotice() {
+  return { version: NOTICE_VERSION, shows: 0, lastAt: 0, closed: null }
+}
+
+/**
+ * Read the notice document, tolerating anything on disk.
+ *
+ * The card is decoration: a corrupt or hand-edited file must degrade to "ask
+ * once more", never to a crash on startup.
+ * @param path - absolute path of the document.
+ * @param log - warning sink for an unreadable file.
+ * @returns always a complete notice document.
+ */
+function readNotice(path, log) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    const shows = Number.isInteger(parsed?.shows) && parsed.shows >= 0 ? Math.min(parsed.shows, NOTICE_MAX_SHOWS) : 0
+    const lastAt = Number.isFinite(parsed?.lastAt) && parsed.lastAt >= 0 ? parsed.lastAt : 0
+    const closed = NOTICE_FINAL.has(parsed?.closed) ? parsed.closed : null
+    return { version: NOTICE_VERSION, shows, lastAt, closed }
+  } catch (error) {
+    if (error.code !== 'ENOENT') log.warn(`${LOG_PREFIX} ignoring ${path}: ${String(error.message ?? error)}`)
+    return emptyNotice()
+  }
+}
+
+/**
+ * Persist the notice document atomically, matching the settings writer.
+ * @param path - absolute path of the document.
+ * @param notice - already-normalized notice document.
+ * @param log - warning sink for a failed write.
+ * @returns true when the document reached disk.
+ */
+function writeNotice(path, notice, log) {
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    const staged = `${path}.tmp`
+    writeFileSync(staged, `${JSON.stringify(notice, null, 2)}\n`)
+    renameSync(staged, path)
+    return true
+  } catch (error) {
+    log.warn(`${LOG_PREFIX} cannot write ${path}: ${String(error.message ?? error)}`)
+    return false
+  }
+}
+
+/**
+ * Decide whether the card is due, and say why.
+ *
+ * The order matters: a closed card stays closed whatever the counters say, and
+ * a spent show budget outranks the cooldown so the reason reported to the
+ * browser is the one that will not change on the next reload.
+ * @param notice - stored notice document.
+ * @param now - clock, injected for tests.
+ * @returns `{ show, reason }` with a stable reason string.
+ */
+export function noticeDecision(notice, now = Date.now()) {
+  if (notice?.closed === 'thanks' || notice?.closed === 'issue') return { show: false, reason: 'answered' }
+  if ((notice?.shows ?? 0) >= NOTICE_MAX_SHOWS) return { show: false, reason: 'capped' }
+  if (notice?.lastAt > 0 && now - notice.lastAt < NOTICE_COOLDOWN_MS) return { show: false, reason: 'cooling' }
+  return { show: true, reason: (notice?.shows ?? 0) === 0 ? 'first' : 'again' }
+}
+
+/* -------------------------------------------------------------------------- *
  * upstream
  * -------------------------------------------------------------------------- */
 
@@ -742,6 +850,11 @@ export function apply(ctx, config = {}) {
   const cacheMs = Number.isFinite(config.cacheMs) && config.cacheMs >= 0 ? config.cacheMs : DEFAULTS.cacheMs
   const settingsPath = join(harnessHome(), SETTINGS_FILENAME)
   const legacySettingsPath = join(harnessHome(), LEGACY_SETTINGS_FILENAME)
+  const noticePath = join(harnessHome(), NOTICE_FILENAME)
+
+  let notice = readNotice(noticePath, log)
+  /** Last decision served, so reloads inside the throttle window cannot spend two shows. */
+  let noticeAnswer
 
   let settings = readSettings(settingsPath, log)
   if (!existsSync(settingsPath) && existsSync(legacySettingsPath)) {
@@ -979,6 +1092,71 @@ export function apply(ctx, config = {}) {
       }
 
       return jsonResponse({ ok: false, code: 'noQuote', message: '上游没有这个标的的报价' }, 404)
+    },
+  })
+
+  /**
+   * The thank-you card. GET answers whether it is due and counts the showing;
+   * POST records what the operator did with it.
+   *
+   * The host owns both halves on purpose: `localStorage` is origin-scoped, and
+   * the desktop shell binds a fresh loopback port on every launch, so a browser
+   * flag would bring the card back on each restart.
+   */
+  ctx.connection.fetch.register({
+    path: NOTICE_PATH,
+    methods: ['GET', 'POST'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      if (request.method !== 'POST') {
+        const now = Date.now()
+        if (noticeAnswer !== undefined && now - noticeAnswer.at < NOTICE_THROTTLE_MS) {
+          return jsonResponse(noticeAnswer.body)
+        }
+        const decision = noticeDecision(notice, now)
+        let body
+        if (decision.show) {
+          notice = { ...notice, shows: notice.shows + 1, lastAt: now }
+          writeNotice(noticePath, notice, log)
+          body = { ok: true, show: true, reason: decision.reason, shows: notice.shows }
+        } else {
+          body = { ok: true, show: false, reason: decision.reason, shows: notice.shows }
+        }
+        noticeAnswer = { at: now, body }
+        return jsonResponse(body)
+      }
+
+      // The body is one short action, so it is read as text and bounded before parsing.
+      let text
+      try {
+        text = await request.text()
+      } catch {
+        return jsonResponse({ ok: false, code: 'badJson', message: '请求体不是合法的 JSON' }, 400)
+      }
+      if (text.length > NOTICE_MAX_BODY) {
+        return jsonResponse({ ok: false, code: 'tooLarge', message: '请求体过大' }, 413)
+      }
+      let body
+      try {
+        body = JSON.parse(text)
+      } catch {
+        return jsonResponse({ ok: false, code: 'badJson', message: '请求体不是合法的 JSON' }, 400)
+      }
+      const action = typeof body?.action === 'string' ? body.action : ''
+      if (!NOTICE_ACTIONS.has(action)) {
+        return jsonResponse({ ok: false, code: 'badAction', message: 'action 必须是 thanks / issue / later' }, 400)
+      }
+
+      // "thanks" and "issue" close the card for good; "later" only restarts the cooldown.
+      notice = action === 'later'
+        ? { ...notice, lastAt: Date.now() }
+        : { ...notice, closed: action }
+      if (!writeNotice(noticePath, notice, log)) {
+        return jsonResponse({ ok: false, code: 'writeFailed', message: '状态写入失败，请检查 DSH_HOME 权限' }, 500)
+      }
+      // The cached answer would still say `show: true`, so it is dropped here.
+      noticeAnswer = undefined
+      return jsonResponse({ ok: true, closed: notice.closed })
     },
   })
 }

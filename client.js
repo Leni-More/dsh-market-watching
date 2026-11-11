@@ -27,6 +27,9 @@ window.__ModuleLoader__.load({
     const SETTINGS_ENDPOINT = '/api/market.settings'
     const RESOLVE_ENDPOINT = '/api/market.resolve'
 
+    /** Route that decides whether the post-install thank-you card is due. */
+    const NOTICE_ENDPOINT = '/api/market.notice'
+
     /** Slot ids, spelled exactly as the UI packages declare them. */
     const SIDEBAR_SLOT = 'sidebar.footer.action'
     const SETTINGS_SLOT = 'settings.section'
@@ -35,6 +38,22 @@ window.__ModuleLoader__.load({
     const CARD_ID = 'market-watching'
     const SETTINGS_ID = 'market-watching-settings'
     const STYLE_ID = 'dsh-market-watching-style'
+    const THANKS_ID = 'market-watching-thanks'
+
+    /** Where a reader can complain about a price or ask for a market. */
+    const REPO_URL = 'https://github.com/Leni-More/dsh-market-watching'
+    const ISSUES_URL = `${REPO_URL}/issues`
+
+    /**
+     * The card waits for the shell to settle before it appears: long enough that
+     * it never races the sidebar's first paint, short enough to still feel like
+     * a greeting rather than a delayed pop-up.
+     */
+    const THANKS_DELAY_MS = 2400
+
+    /** While the operator is typing, the card keeps its distance and tries again. */
+    const THANKS_IDLE_MS = 800
+    const THANKS_IDLE_TRIES = 12
 
     /** Locale namespace this plugin owns; `apply` registers the dictionaries below. */
     const LOCALE_NAMESPACE = 'marketTicker'
@@ -80,7 +99,7 @@ window.__ModuleLoader__.load({
         'page.subtitle': '侧边栏底部显示的价格、涨跌幅与盈亏。标的、顺序与刷新间隔都在这里决定，改动立即生效。',
         'page.loading': '正在读取自选列表…',
         'page.failed': '读取自选列表失败，请重开设置页。',
-        'page.footer': '数据来自东方财富与 Gate.io 的公开接口，无需账号与密钥；网络不通时卡片保留上一次报价并淡化显示。',
+        'page.footer': '数据来自东方财富与 Gate.io 的公开接口，无需账号与密钥；不同平台可能存在一定价差，可以根据实际的价差来调整成本价。',
         'panel.master': '总开关',
         'panel.masterHint': '关闭后侧边栏不再显示卡片，也不再请求行情',
         'panel.add': '添加标的',
@@ -135,6 +154,14 @@ window.__ModuleLoader__.load({
         'error.unknownCode': '认不出这个代码，换成 600519 / hk00700 / AAPL / USTEC / EURUSD / XAUUSD / BTC 试试。',
         'error.noQuote': '上游这会儿没有这个标的的报价。',
         'hint.setPriceFirst': '先在输入框填成本价，再点确定，然后就能切换买入/做空',
+        'thanks.title': '谢谢你把它留在侧边栏',
+        'thanks.body': '很开心它可以帮上你。功能优化，或者你想增加新的标的，可以随时提出来。要是它确实帮上了忙，去仓库点个 Star 就是最好的谢礼。',
+        'thanks.wish': '祝你持仓大赚，住上大平层，开上帕拉梅拉，享受苹果人生。',
+        'thanks.star': '点个 Star',
+        'thanks.ack': '知道了',
+        'thanks.close': '关闭',
+        'thanks.note': '有更好的建议？',
+        'thanks.repo': '去提一条',
       },
       en: {
         'market.crypto': 'Crypto',
@@ -168,7 +195,7 @@ window.__ModuleLoader__.load({
         'page.subtitle': 'Price, change and P&L at the bottom of the sidebar. Symbols, order and refresh rate are all decided here, and every change applies at once.',
         'page.loading': 'Reading the watchlist…',
         'page.failed': 'Could not read the watchlist. Reopen Settings.',
-        'page.footer': 'Quotes come from the public East Money and Gate.io endpoints — no account, no API key. When a network call fails the card keeps the last quote and fades it.',
+        'page.footer': 'The data comes from the public endpoints of East Money and Gate.io, with no account or API key required. Price differences may exist across platforms, so the cost price can be adjusted based on the actual price difference.',
         'panel.master': 'Master switch',
         'panel.masterHint': 'When off the sidebar card disappears and no quotes are fetched',
         'panel.add': 'Add a symbol',
@@ -223,6 +250,14 @@ window.__ModuleLoader__.load({
         'error.unknownCode': 'Unrecognised code. Try 600519 / hk00700 / AAPL / USTEC / EURUSD / XAUUSD / BTC.',
         'error.noQuote': 'The upstream has no quote for this symbol right now.',
         'hint.setPriceFirst': 'Type a cost and press Save first, then the long/short switch works',
+        'thanks.title': 'Thank you for keeping it in the sidebar',
+        'thanks.body': 'Glad it could help. If you’d like feature improvements or want to add new tickers, feel free to reach out anytime. If it really did help, dropping a Star on the repo is the best thank-you.',
+        'thanks.wish': 'Wishing you big gains on your holdings, a fancy penthouse, a Panamera, and the Apple life.',
+        'thanks.star': 'Drop a Star',
+        'thanks.ack': 'Got it',
+        'thanks.close': 'Close',
+        'thanks.note': 'Any better suggestions?',
+        'thanks.repo': 'Open an issue',
       },
     }
 
@@ -484,6 +519,17 @@ window.__ModuleLoader__.load({
   font-size: 11px;
   letter-spacing: 0.02em;
 }
+
+/* Brand mark: gives the card a face of its own before the title, and stays put when the
+   rail collapses the header to bare numbers and strips the written title away. */
+.dmt-brand {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: #22c55e;
+}
+
+.dmt-brand > svg { display: block; }
 
 .dmt-mark {
   display: inline-block;
@@ -890,6 +936,162 @@ window.__ModuleLoader__.load({
 
 .dmt-toggle[data-on="1"] { background: var(--dsw-alias-brand-primary, #4d7cfe); border-color: transparent; }
 .dmt-toggle[data-on="1"]::after { transform: translateX(18px); background: #fff; }
+
+/* ------------------------------------------------------------------ *
+ * thank-you card
+ * ------------------------------------------------------------------ */
+
+.dmt-thanks-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(16, 16, 20, 0.4);
+  animation: dmt-thanks-fade 200ms ease-out;
+}
+
+.dmt-thanks {
+  position: relative;
+  box-sizing: border-box;
+  width: min(384px, 100%);
+  padding: 24px 24px 18px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.22));
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2, #1c1c20);
+  color: var(--dsw-alias-label-primary, #f2f2f5);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.32);
+  font-size: 13px;
+  line-height: 1.62;
+  animation: dmt-thanks-rise 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.dmt-thanks:focus { outline: none; }
+
+.dmt-thanks-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, rgba(160, 160, 170, 0.9));
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dmt-thanks-close:hover {
+  background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.12));
+  color: var(--dsw-alias-label-primary, #f2f2f5);
+}
+
+.dmt-thanks-title {
+  margin: 0 22px 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.dmt-thanks-body {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, rgba(210, 210, 218, 0.92));
+}
+
+.dmt-thanks-wish {
+  margin: 10px 0 0;
+  color: var(--dsw-alias-state-success-primary, #30a46c);
+  font-weight: 600;
+}
+
+.dmt-thanks-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.dmt-thanks-cta,
+.dmt-thanks-ack {
+  appearance: none;
+  box-sizing: border-box;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+/* The ask is the one bright thing in the card: amber rather than the shell's blue, so it
+   reads as an invitation instead of another system button. Dark ink keeps it legible. */
+.dmt-thanks-cta {
+  border: 1px solid #F0B429;
+  background: #FFC93C;
+  color: #2B2000;
+  box-shadow: 0 6px 16px -10px rgba(255, 201, 60, 0.9);
+}
+
+.dmt-thanks-cta:hover {
+  background: #FFD75E;
+  border-color: #F7C948;
+  color: #2B2000;
+}
+
+.dmt-thanks-ack {
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.28));
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #f2f2f5);
+}
+
+.dmt-thanks-ack:hover { background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.12)); }
+
+.dmt-thanks-cta:focus-visible,
+.dmt-thanks-ack:focus-visible,
+.dmt-thanks-close:focus-visible,
+.dmt-thanks-link:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #4d7cfe);
+  outline-offset: 2px;
+}
+
+.dmt-thanks-foot {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.16));
+  color: var(--dsw-alias-label-tertiary, rgba(160, 160, 170, 0.9));
+  font-size: 12px;
+}
+
+.dmt-thanks-link {
+  color: var(--dsw-alias-brand-primary, #4d7cfe);
+  text-decoration: none;
+}
+
+.dmt-thanks-link:hover { text-decoration: underline; }
+
+@keyframes dmt-thanks-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dmt-thanks-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dmt-thanks-layer,
+  .dmt-thanks { animation: none; }
+}
 `
 
     /** Inject the stylesheet once per document. */
@@ -1053,6 +1255,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dmt-head' },
+            h('span', { className: 'dmt-brand', 'aria-hidden': 'true' }, h(BrandMark, { size: 14 })),
             h('span', {
               className: 'dmt-mark',
               'data-stale': stale ? '1' : '0',
@@ -1699,6 +1902,248 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Brand mark for the card header: the same rising line as the settings glyph, but
+     * filled so it still reads at 14px against the sidebar. Colour comes from CSS, so
+     * the mark can be darkened without editing the shape.
+     */
+    function BrandMark(props) {
+      const size = typeof props?.size === 'number' ? props.size : 14
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' },
+        h('rect', { width: 24, height: 24, rx: 6, fill: 'currentColor' }),
+        h('path', {
+          d: 'M5.4 15.6 9.5 11.5l2.9 2.9 6-6',
+          stroke: '#FFFFFF',
+          strokeWidth: 2.1,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+        h('path', {
+          d: 'M14.7 8.4h3.7v3.7',
+          stroke: '#FFFFFF',
+          strokeWidth: 2.1,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+      )
+    }
+
+    /* ---------------------------------------------------------------------- *
+     * thank-you card
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * True while the operator is typing somewhere, so the card never takes the
+     * caret out of a cost box that is half filled.
+     * @returns whether an editable element has focus.
+     */
+    function isEditing() {
+      const active = document.activeElement
+      if (active === null || active === undefined) return false
+      const tag = String(active.tagName ?? '').toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+      return active.isContentEditable === true
+    }
+
+    /**
+     * Ask the host whether the card is due. A host that cannot answer is a host
+     * that shows nothing: this surface must never get in the way of the card.
+     * @returns the decision payload, or undefined when the route did not answer.
+     */
+    async function fetchThanks() {
+      try {
+        const body = await requestJson(NOTICE_ENDPOINT)
+        return typeof body?.show === 'boolean' ? body : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * Record one answer. `keepalive` matters for the issue link: the click also
+     * opens a new tab, and the request has to survive that navigation.
+     * @param action - `thanks`, `issue` or `later`.
+     */
+    function answerThanks(action) {
+      void fetch(apiUrl(NOTICE_ENDPOINT), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+        keepalive: true,
+      }).catch(() => {})
+    }
+
+    /**
+     * Build the card as plain DOM instead of a React tree: it lives directly on
+     * `document.body`, outlives every panel switch, and must not depend on which
+     * renderer version the shell happens to ship.
+     * @param onClose - called with the action the operator chose.
+     * @returns the layer plus the two hooks `mountThanks` needs.
+     */
+    function buildThanks(onClose) {
+      const titleId = `${THANKS_ID}-title`
+      const bodyId = `${THANKS_ID}-body`
+
+      const layer = document.createElement('div')
+      layer.className = 'dmt-thanks-layer'
+
+      const card = document.createElement('div')
+      card.className = 'dmt-thanks'
+      card.id = THANKS_ID
+      card.tabIndex = -1
+      card.setAttribute('role', 'dialog')
+      card.setAttribute('aria-modal', 'true')
+      card.setAttribute('aria-labelledby', titleId)
+      card.setAttribute('aria-describedby', bodyId)
+
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.className = 'dmt-thanks-close'
+      close.textContent = '×'
+      close.addEventListener('click', () => onClose('later'))
+
+      const title = document.createElement('h2')
+      title.className = 'dmt-thanks-title'
+      title.id = titleId
+
+      const body = document.createElement('p')
+      body.className = 'dmt-thanks-body'
+      body.id = bodyId
+
+      const wish = document.createElement('p')
+      wish.className = 'dmt-thanks-wish'
+
+      const actions = document.createElement('div')
+      actions.className = 'dmt-thanks-actions'
+
+      const cta = document.createElement('a')
+      cta.className = 'dmt-thanks-cta'
+      // The star lives on the repo landing page; no deep link into the widget needed.
+      cta.href = REPO_URL
+      cta.target = '_blank'
+      cta.rel = 'noopener noreferrer'
+      // Starring or saying thanks both mean "this landed" — neither should be asked twice.
+      cta.addEventListener('click', () => onClose('thanks'))
+
+      const ack = document.createElement('button')
+      ack.type = 'button'
+      ack.className = 'dmt-thanks-ack'
+      ack.addEventListener('click', () => onClose('thanks'))
+
+      const foot = document.createElement('p')
+      foot.className = 'dmt-thanks-foot'
+
+      const note = document.createTextNode('')
+      const feedback = document.createElement('a')
+      feedback.className = 'dmt-thanks-link'
+      feedback.href = ISSUES_URL
+      feedback.target = '_blank'
+      feedback.rel = 'noopener noreferrer'
+
+      actions.appendChild(cta)
+      actions.appendChild(ack)
+      foot.appendChild(note)
+      foot.appendChild(document.createTextNode(' '))
+      foot.appendChild(feedback)
+      card.appendChild(close)
+      card.appendChild(title)
+      card.appendChild(body)
+      card.appendChild(wish)
+      card.appendChild(actions)
+      card.appendChild(foot)
+      layer.appendChild(card)
+
+      // Clicking the dimmed area, and only it, counts as "later".
+      layer.addEventListener('click', (event) => { if (event.target === layer) onClose('later') })
+      layer.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        onClose('later')
+      })
+
+      /** Repaint every label, so a language switch reaches the open card too. */
+      const copy = () => {
+        close.setAttribute('aria-label', t('thanks.close'))
+        title.textContent = t('thanks.title')
+        body.textContent = t('thanks.body')
+        wish.textContent = t('thanks.wish')
+        cta.textContent = t('thanks.star')
+        ack.textContent = t('thanks.ack')
+        note.textContent = t('thanks.note')
+        feedback.textContent = t('thanks.repo')
+      }
+      copy()
+
+      return { layer, card, copy }
+    }
+
+    /**
+     * Show the thank-you card once, when the host says it is due.
+     *
+     * Everything that decides whether it appears lives on the host: the show
+     * budget, the cooldown and the final answer all survive a restart, which a
+     * browser flag could not, because the desktop shell binds a new port each
+     * launch and takes `localStorage` with it.
+     */
+    function mountThanks() {
+      const host = typeof document === 'undefined' ? undefined : document.body
+      // Test harnesses load this module without a DOM; there is nothing to
+      // attach a floating card to, and nothing to prove by trying.
+      if (host === undefined || host === null || typeof host.appendChild !== 'function') return
+      if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') return
+
+      /** The layer on screen, or null. */
+      let layer = null
+      /** Element that held focus before the card took it. */
+      let previous = null
+      let unsubscribe = null
+      let tries = 0
+
+      const dismiss = (action) => {
+        if (layer === null) return
+        const node = layer
+        layer = null
+        node.remove()
+        if (unsubscribe !== null) {
+          unsubscribe()
+          unsubscribe = null
+        }
+        answerThanks(action)
+        if (previous !== null && typeof previous.focus === 'function') previous.focus()
+        previous = null
+      }
+
+      const reveal = () => {
+        const built = buildThanks(dismiss)
+        layer = built.layer
+        previous = document.activeElement
+        document.body.appendChild(layer)
+        built.card.focus()
+        if (localeService !== null && typeof localeService.subscribe === 'function') {
+          unsubscribe = localeService.subscribe(built.copy)
+        }
+      }
+
+      const attempt = async () => {
+        if (layer !== null || document.hidden === true) return
+        if (isEditing()) {
+          // Give the operator room to finish the sentence; past the budget the
+          // card is simply skipped for this page load.
+          if (tries >= THANKS_IDLE_TRIES) return
+          tries += 1
+          window.setTimeout(() => { void attempt() }, THANKS_IDLE_MS)
+          return
+        }
+        const decision = await fetchThanks()
+        if (decision?.show !== true || layer !== null || document.hidden === true) return
+        reveal()
+      }
+
+      window.setTimeout(() => { void attempt() }, THANKS_DELAY_MS)
+    }
+
+    /**
      * Register the dictionaries, then both surfaces. `slots` and `locale` are the two
      * services these components need, so they are the only ones injected — injecting
      * an absent service would park the fiber.
@@ -1733,6 +2178,14 @@ window.__ModuleLoader__.load({
         { name: SETTINGS_ICON_SLOT, id: SETTINGS_ID },
         MarketIcon,
       ))
+
+      try {
+        mountThanks()
+      } catch (error) {
+        // A greeting is not worth a broken sidebar: the card may be absent, the
+        // quote card and the editor must still mount.
+        console.warn('[market-watching] thank-you card skipped', error)
+      }
     }
 
     const inject = ['slots', 'locale']

@@ -250,3 +250,32 @@ test('cost and size are committed by the row button, not by leaving the box', ()
   // position. Only the row button and the Enter key may persist now.
   assert.ok(!/onBlur: \(event\) => \{ commit/.test(source), 'leaving a box must not save')
 })
+
+test('the thank-you card talks to the host route and the issue tracker', () => {
+  assert.ok(source.includes("const NOTICE_ENDPOINT = '/api/market.notice'"), 'the card asks the host, not a browser flag')
+  assert.ok(source.includes("const REPO_URL = 'https://github.com/Leni-More/dsh-market-watching'"))
+  assert.ok(source.includes('const ISSUES_URL = `${REPO_URL}/issues`'))
+  assert.ok(source.includes("answerThanks('later')") || source.includes("onClose('later')"), 'dismissal is reported back')
+  // Both dictionaries carry the card, or one shell renders raw keys.
+  for (const key of ['thanks.title', 'thanks.body', 'thanks.wish', 'thanks.star', 'thanks.ack', 'thanks.close', 'thanks.note', 'thanks.repo']) {
+    assert.equal(source.split(`'${key}':`).length - 1, 2, `${key} is translated twice`)
+  }
+  // The primary ask is a star, so it has to land on the repo rather than the issue list.
+  assert.ok(/cta\.href = REPO_URL/.test(source), 'the amber button opens the repo')
+  assert.ok(source.includes("onClose('thanks')"), 'clicking the star retires the card')
+})
+
+test('the plugin ships a brand mark, and the sidebar card wears it', () => {
+  const icon = readFileSync(new URL('../icon.svg', import.meta.url), 'utf8')
+  assert.ok(icon.trimStart().startsWith('<svg'), 'icon.svg is an SVG document')
+  assert.ok(icon.includes('viewBox="0 0 24 24"'), 'the mark is drawn on one 24px grid')
+
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(manifest.icon, './icon.svg')
+  // npm publishes only what `files` lists, so an icon declared but not listed would
+  // work in the repo and 404 on the registry.
+  assert.ok(manifest.files.includes('icon.svg'), 'the icon is published, not just declared')
+
+  assert.ok(source.includes("className: 'dmt-brand'"), 'the card header renders the mark')
+  assert.ok(source.includes('function BrandMark'), 'the mark is drawn in the module, not fetched')
+})

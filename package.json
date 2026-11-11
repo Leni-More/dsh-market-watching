@@ -1,7 +1,8 @@
 {
   "name": "dsh-market-watching",
-  "version": "0.1.0",
-  "description": "DSH 侧栏行情卡片：加密货币、A股/港股/美股、外汇的实时价格与涨幅，可设置买入/做空价格与数量，实时显示持仓盈亏金额；标的在 DSH 设置页里自选，无需登录。",
+  "version": "0.2.2",
+  "description": "DSH 侧栏行情卡片：加密货币、A股/港股/美股、黄金、外汇、指数的实时价格与涨幅，可设置买入/做空价格与数量，实时显示持仓盈亏金额；标的在 DSH 设置页里自选，无需登录。",
+  "icon": "./icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -34,6 +35,7 @@
     "index.js",
     "http.mjs",
     "client.js",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
