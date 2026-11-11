@@ -25,6 +25,8 @@ A compact card at the bottom of the sidebar, one instrument per row: `code · pr
 - **No login, no key**: every upstream is a public quote endpoint — no account, no token, no auth step.
 - **Never blank on failure**: when every upstream fails, the last good quotes stay on screen and dim instead of turning into a row of `--`.
 
+- **A line at the foot of settings**: the settings page ends with a star link and the bare repository address, so giving feedback never means digging through this README.
+
 ![The market card at the bottom of the sidebar](docs/screenshots/sidebar-card1.png)
 
 ![The card in place in a full desktop window](docs/screenshots/sidebar-card2.png)

@@ -100,6 +100,7 @@ window.__ModuleLoader__.load({
         'page.loading': '正在读取自选列表…',
         'page.failed': '读取自选列表失败，请重开设置页。',
         'page.footer': '数据来自东方财富与 Gate.io 的公开接口，无需账号与密钥；不同平台可能存在一定价差，可以根据实际的价差来调整成本价。',
+        'credit.ask': '要是它帮上了忙，去仓库点个 Star 就是最好的谢礼：',
         'panel.master': '总开关',
         'panel.masterHint': '关闭后侧边栏不再显示卡片，也不再请求行情',
         'panel.add': '添加标的',
@@ -196,6 +197,7 @@ window.__ModuleLoader__.load({
         'page.loading': 'Reading the watchlist…',
         'page.failed': 'Could not read the watchlist. Reopen Settings.',
         'page.footer': 'The data comes from the public endpoints of East Money and Gate.io, with no account or API key required. Price differences may exist across platforms, so the cost price can be adjusted based on the actual price difference.',
+        'credit.ask': 'If it earns its keep, a star on the repo is the best thank-you:',
         'panel.master': 'Master switch',
         'panel.masterHint': 'When off the sidebar card disappears and no quotes are fetched',
         'panel.add': 'Add a symbol',
@@ -690,6 +692,29 @@ window.__ModuleLoader__.load({
 
 .dmt-page-title { font-size: 15px; font-weight: 650; margin: 0; }
 .dmt-page-sub { color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.95)); font-size: 12px; margin: 4px 0 0; }
+.dmt-page-credit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.95));
+}
+.dmt-page-star { color: #F0B429; font-size: 13px; line-height: 1; }
+.dmt-page-link {
+  color: var(--dsw-alias-state-business-primary, #2b5cff);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 0.5px;
+}
+.dmt-page-link:hover { color: var(--dsw-alias-state-business-primary, #2b5cff); opacity: 0.78; }
+.dmt-page-link:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #2b5cff);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 
 .dmt-panel {
   border: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.18));
@@ -1876,6 +1901,23 @@ window.__ModuleLoader__.load({
         ),
 
         h('p', { className: 'dmt-page-sub' }, t('page.footer')),
+
+        h(
+          'p',
+          { className: 'dmt-page-credit' },
+          h('span', { className: 'dmt-page-star', 'aria-hidden': 'true' }, '★'),
+          h('span', null, t('credit.ask')),
+          h(
+            'a',
+            {
+              className: 'dmt-page-link',
+              href: REPO_URL,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+            REPO_URL.replace(/^https?:\/\//, ''),
+          ),
+        ),
       )
     }
 

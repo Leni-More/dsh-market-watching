@@ -265,6 +265,16 @@ test('the thank-you card talks to the host route and the issue tracker', () => {
   assert.ok(source.includes("onClose('thanks')"), 'clicking the star retires the card')
 })
 
+test('the settings page ends with the star line and the repo address', () => {
+  assert.ok(source.includes("className: 'dmt-page-credit'"), 'the settings page carries a credit line')
+  assert.ok(source.includes("t('credit.ask')"), 'the ask goes through the dictionary')
+  assert.equal(source.split("'credit.ask':").length - 1, 2, 'credit.ask is translated twice')
+  // The address is printed, not only linked: a link whose text says "here" gives the
+  // reader nothing to copy when the shell refuses to open a tab.
+  assert.ok(/href: REPO_URL/.test(source), 'the line links to the repository')
+  assert.ok(source.includes('REPO_URL.replace(/^https?:\\/\\//, \'\')'), 'the bare address is what the reader sees')
+})
+
 test('the plugin ships a brand mark, and the sidebar card wears it', () => {
   const icon = readFileSync(new URL('../icon.svg', import.meta.url), 'utf8')
   assert.ok(icon.trimStart().startsWith('<svg'), 'icon.svg is an SVG document')
