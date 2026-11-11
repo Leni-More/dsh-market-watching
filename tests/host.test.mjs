@@ -11,7 +11,7 @@ import { join } from 'node:path'
 
 process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'market-watching-test-'))
 
-const { apply, candidatesFor, normalizeItem, normalizeQty, normalizeSettings, noticeDecision, positionAmount, positionPnl } = await import('../index.js')
+const { apply, candidatesFor, installStamp, normalizeItem, normalizeQty, normalizeSettings, noticeDecision, positionAmount, positionPnl } = await import('../index.js')
 
 /** Collect every route the plugin registers against a fake connection. */
 function boot(config = {}) {
@@ -354,7 +354,7 @@ test('an old dsh-market-ticker.json is adopted under the new file name', async (
   }
 })
 
-test('the thank-you card is offered until it is answered', async () => {
+test('the thank-you card greets each installed copy once', async () => {
   const home = mkdtempSync(join(tmpdir(), 'market-watching-notice-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = home
@@ -362,16 +362,15 @@ test('the thank-you card is offered until it is answered', async () => {
     const routes = boot()
     const first = await call(routes, '/api/market.notice')
     assert.equal(first.body.show, true)
-    assert.equal(first.body.reason, 'first')
-    assert.equal(first.body.shows, 1)
+    assert.equal(first.body.reason, 'installed')
 
-    // A reload inside the throttle window is answered from memory, so it cannot
-    // spend a second show.
+    // A reload inside the throttle window is answered from memory: same verdict.
     const reload = await call(routes, '/api/market.notice')
-    assert.equal(reload.body.shows, 1)
+    assert.equal(reload.body.show, true)
 
     const stored = JSON.parse(await readFile(join(home, 'dsh-market-watching.notice.json'), 'utf8'))
-    assert.equal(stored.shows, 1)
+    assert.equal(stored.install, installStamp())
+    assert.ok(stored.shownAt > 0)
 
     const answered = await call(routes, '/api/market.notice', {
       method: 'POST',
@@ -381,14 +380,10 @@ test('the thank-you card is offered until it is answered', async () => {
     assert.equal(answered.status, 200)
     assert.equal(answered.body.closed, 'thanks')
 
-    const after = await call(routes, '/api/market.notice')
-    assert.equal(after.body.show, false)
-    assert.equal(after.body.reason, 'answered')
-
-    // A restart reads the file, so the answer outlives the process.
+    // A restart reads the file and stays quiet: this copy has been greeted.
     const restarted = await call(boot(), '/api/market.notice')
     assert.equal(restarted.body.show, false)
-    assert.equal(restarted.body.reason, 'answered')
+    assert.equal(restarted.body.reason, 'asked')
   } finally {
     process.env.DSH_HOME = previous
   }
@@ -428,14 +423,20 @@ test('the notice route rejects answers it cannot understand', async () => {
   }
 })
 
-test('noticeDecision asks until an answer closes it', () => {
+test('noticeDecision greets one installed copy', () => {
   const now = 1_700_000_000_000
-  const day = 24 * 60 * 60 * 1000
-  assert.deepEqual(noticeDecision({ shows: 0, lastAt: 0, closed: null }), { show: true, reason: 'first' })
-  assert.deepEqual(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: null }), { show: true, reason: 'again' })
-  // A recent showing is not a reason to hide: the file outlives the install.
-  assert.equal(noticeDecision({ shows: 1, lastAt: now - 1000, closed: null }).show, true)
-  assert.equal(noticeDecision({ shows: 3, lastAt: now, closed: null }).show, true)
-  assert.equal(noticeDecision({ shows: 1, lastAt: 0, closed: 'issue' }).reason, 'answered')
-  assert.equal(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: 'thanks' }).reason, 'answered')
+  assert.deepEqual(noticeDecision({ version: 3, install: '', shownAt: 0, closed: null }, 'copy-a'), {
+    show: true,
+    reason: 'installed',
+  })
+  // A record from another copy — an older install, or a fresh directory — is due.
+  assert.deepEqual(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: null }, 'copy-b'), {
+    show: true,
+    reason: 'installed',
+  })
+  // The copy the file already greeted stays quiet, whatever the reader answered.
+  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: null }, 'copy-a').show, false)
+  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: now, closed: 'issue' }, 'copy-a').show, false)
+  // Nothing is remembered about a copy that was never greeted.
+  assert.equal(noticeDecision({ version: 3, install: 'copy-a', shownAt: 0, closed: null }, 'copy-a').show, true)
 })

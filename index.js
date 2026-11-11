@@ -22,9 +22,10 @@
  * good quote, which the browser half renders as stale instead of hiding.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 import { httpsGet } from './http.mjs'
 
@@ -68,21 +69,22 @@ const NOTICE_FILENAME = 'dsh-market-watching.notice.json'
 
 /**
  * Bumped only when the stored notice shape changes incompatibly, and a record
- * from an older version is dropped: version 1 files carried a show budget and a
- * cooldown, which made a freshly reinstalled plugin inherit "already asked".
+ * from an older version is dropped. Version 2 still asked on every page load;
+ * version 3 greets one installed copy exactly once.
  */
-const NOTICE_VERSION = 2
+const NOTICE_VERSION = 3
 
 /**
- * The browser asks once per page load; a reload storm must not race two writes,
- * so two answers inside this window are served from memory.
+ * The browser asks on every page load, but only the first answer of an
+ * installation is a "yes". Answers inside this window are served from memory so
+ * a reload storm cannot race two writes.
  */
 const NOTICE_THROTTLE_MS = 30 * 1000
 
 /** An answer body is a single short action, never a payload. */
 const NOTICE_MAX_BODY = 2048
 
-/** Answers that mean "do not ask again", as opposed to "not now". */
+/** Answers that mean the operator followed a link; kept as a diagnostic. */
 const NOTICE_FINAL = new Set(['thanks', 'issue'])
 
 /** Every answer the card can send back. */
@@ -570,19 +572,47 @@ function writeSettings(path, settings, log) {
  * -------------------------------------------------------------------------- */
 
 /**
- * Shape written before anything has been shown, so the first decision is a
- * plain `shows === 0` read instead of a special case.
+ * Absolute path of this plugin's own directory: the module that runs is at the
+ * package root, so `import.meta.url` names the installed copy itself.
+ * @returns the directory the operator installed.
+ */
+function packageRoot() {
+  return dirname(fileURLToPath(import.meta.url))
+}
+
+/**
+ * A token that changes when the plugin is installed, and only then.
+ *
+ * Directory birth time is the honest signal: npm and pnpm build a fresh
+ * directory for a new copy, while an in-place change to the same copy leaves the
+ * directory alone. Some filesystems report no birth time, so the directory's
+ * `mtime` is the fallback — still per-copy rather than per-load.
+ * @param root - the installed package directory.
+ * @returns a stable string for this copy.
+ */
+export function installStamp(root = packageRoot()) {
+  try {
+    const stats = statSync(root)
+    return `${Math.trunc(stats.birthtimeMs || stats.mtimeMs)}`
+  } catch {
+    /* An unreadable directory means "cannot tell"; greet once, quietly. */
+    return 'unknown'
+  }
+}
+
+/**
+ * Shape written before anything has been shown.
  * @returns a fresh notice document.
  */
 function emptyNotice() {
-  return { version: NOTICE_VERSION, shows: 0, lastAt: 0, closed: null }
+  return { version: NOTICE_VERSION, install: '', shownAt: 0, closed: null }
 }
 
 /**
  * Read the notice document, tolerating anything on disk.
  *
- * The card is decoration: a corrupt or hand-edited file must degrade to "ask
- * once more", never to a crash on startup.
+ * The card is decoration: a corrupt or hand-edited file must degrade to "greet
+ * this copy once", never to a crash on startup.
  * @param path - absolute path of the document.
  * @param log - warning sink for an unreadable file.
  * @returns always a complete notice document.
@@ -591,10 +621,12 @@ function readNotice(path, log) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
     if (parsed?.version !== NOTICE_VERSION) return emptyNotice()
-    const shows = Number.isInteger(parsed?.shows) && parsed.shows >= 0 ? parsed.shows : 0
-    const lastAt = Number.isFinite(parsed?.lastAt) && parsed.lastAt >= 0 ? parsed.lastAt : 0
-    const closed = NOTICE_FINAL.has(parsed?.closed) ? parsed.closed : null
-    return { version: NOTICE_VERSION, shows, lastAt, closed }
+    return {
+      version: NOTICE_VERSION,
+      install: typeof parsed.install === 'string' ? parsed.install : '',
+      shownAt: Number.isFinite(parsed.shownAt) && parsed.shownAt >= 0 ? parsed.shownAt : 0,
+      closed: NOTICE_FINAL.has(parsed?.closed) ? parsed.closed : null,
+    }
   } catch (error) {
     if (error.code !== 'ENOENT') log.warn(`${LOG_PREFIX} ignoring ${path}: ${String(error.message ?? error)}`)
     return emptyNotice()
@@ -624,16 +656,18 @@ function writeNotice(path, notice, log) {
 /**
  * Decide whether the card is due, and say why.
  *
- * Only an answer ends the card: `thanks` and `issue` both mean the message
- * landed. Everything else asks again on the next page load — a budget counted
- * in files outlives the plugin it belongs to, so the second install saw a card
- * it had never been shown.
+ * The rule is one greeting per installed copy, so the only question is whether
+ * this copy is the one the file already greeted. Nothing counts, nothing cools
+ * down: a budget kept in a file outlives the plugin it belongs to, which is how
+ * a freshly reinstalled copy ended up silent.
  * @param notice - stored notice document.
+ * @param install - stamp of the copy that is running.
  * @returns `{ show, reason }` with a stable reason string.
  */
-export function noticeDecision(notice) {
-  if (notice?.closed === 'thanks' || notice?.closed === 'issue') return { show: false, reason: 'answered' }
-  return { show: true, reason: (notice?.shows ?? 0) === 0 ? 'first' : 'again' }
+export function noticeDecision(notice, install = installStamp()) {
+  if (!notice || typeof notice !== 'object') return { show: false, reason: 'missing' }
+  if (notice.install === install && notice.shownAt > 0) return { show: false, reason: 'asked' }
+  return { show: true, reason: 'installed' }
 }
 
 /* -------------------------------------------------------------------------- *
@@ -850,7 +884,9 @@ export function apply(ctx, config = {}) {
   const noticePath = join(harnessHome(), NOTICE_FILENAME)
 
   let notice = readNotice(noticePath, log)
-  /** Last decision served, so reloads inside the throttle window cannot spend two shows. */
+  /** Which copy this process runs, read once: it cannot change while alive. */
+  const install = installStamp()
+  /** Last decision served, so reloads inside the throttle window cannot race writes. */
   let noticeAnswer
 
   let settings = readSettings(settingsPath, log)
@@ -1093,8 +1129,8 @@ export function apply(ctx, config = {}) {
   })
 
   /**
-   * The thank-you card. GET answers whether it is due and counts the showing;
-   * POST records what the operator did with it.
+   * The thank-you card. GET answers whether this copy is the one to greet, and
+   * marks it greeted on the first yes; POST records what the operator did.
    *
    * The host owns both halves on purpose: `localStorage` is origin-scoped, and
    * the desktop shell binds a fresh loopback port on every launch, so a browser
@@ -1110,15 +1146,13 @@ export function apply(ctx, config = {}) {
         if (noticeAnswer !== undefined && now - noticeAnswer.at < NOTICE_THROTTLE_MS) {
           return jsonResponse(noticeAnswer.body)
         }
-        const decision = noticeDecision(notice)
+        const decision = noticeDecision(notice, install)
         let body
         if (decision.show) {
-          notice = { ...notice, shows: notice.shows + 1, lastAt: now }
+          notice = { ...notice, install, shownAt: now }
           writeNotice(noticePath, notice, log)
-          body = { ok: true, show: true, reason: decision.reason, shows: notice.shows }
-        } else {
-          body = { ok: true, show: false, reason: decision.reason, shows: notice.shows }
         }
+        body = { ok: true, show: decision.show, reason: decision.reason }
         noticeAnswer = { at: now, body }
         return jsonResponse(body)
       }
@@ -1144,15 +1178,12 @@ export function apply(ctx, config = {}) {
         return jsonResponse({ ok: false, code: 'badAction', message: 'action 必须是 thanks / issue / later' }, 400)
       }
 
-      // "thanks" and "issue" close the card for good; "later" only notes the visit.
-      notice = action === 'later'
-        ? { ...notice, lastAt: Date.now() }
-        : { ...notice, closed: action }
+      // Both link clicks are remembered only as a diagnostic; the greeting itself
+      // is already spent by the GET that painted the card.
+      notice = NOTICE_FINAL.has(action) ? { ...notice, closed: action } : notice
       if (!writeNotice(noticePath, notice, log)) {
         return jsonResponse({ ok: false, code: 'writeFailed', message: '状态写入失败，请检查 DSH_HOME 权限' }, 500)
       }
-      // The cached answer would still say `show: true`, so it is dropped here.
-      noticeAnswer = undefined
       return jsonResponse({ ok: true, closed: notice.closed })
     },
   })
