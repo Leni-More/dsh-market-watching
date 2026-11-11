@@ -142,7 +142,7 @@ The `config` block in `cordis.patch.yml` overrides these defaults (a profile pat
 
 Settings persist to `$DSH_HOME/dsh-market-watching.json` (default `%USERPROFILE%\.dsh\dsh-market-watching.json`). The plugin used to be called `dsh-plugin-market-ticker`; its old file `dsh-market-ticker.json` is adopted automatically on first start and left in place.
 
-The card keeps its own counter in `$DSH_HOME/dsh-market-watching.notice.json` rather than inside the settings document: settings are normalized on every read and write, so an unknown field would be dropped the moment the watchlist is saved.
+The card keeps its own counter in `$DSH_HOME/dsh-market-watching.notice.json` rather than inside the settings document: settings are normalized on every read and write, so an unknown field would be dropped the moment the watchlist is saved. It asks once per page load until you follow the star link or open an issue, and only then goes quiet for good; the file carries a version, so a record written by an older build is ignored and a reinstall always shows the card.
 
 ## How it works
 

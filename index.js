@@ -66,18 +66,16 @@ const SETTINGS_VERSION = 1
  */
 const NOTICE_FILENAME = 'dsh-market-watching.notice.json'
 
-/** Bumped only when the stored notice shape changes incompatibly. */
-const NOTICE_VERSION = 1
-
-/** How many times one installation may ever see the card. */
-const NOTICE_MAX_SHOWS = 3
-
-/** Quiet window after a "later", so the card never becomes a nag. */
-const NOTICE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
+/**
+ * Bumped only when the stored notice shape changes incompatibly, and a record
+ * from an older version is dropped: version 1 files carried a show budget and a
+ * cooldown, which made a freshly reinstalled plugin inherit "already asked".
+ */
+const NOTICE_VERSION = 2
 
 /**
- * The browser asks once per page load; a reload storm must not burn through the
- * show budget, so two answers inside this window are served from memory.
+ * The browser asks once per page load; a reload storm must not race two writes,
+ * so two answers inside this window are served from memory.
  */
 const NOTICE_THROTTLE_MS = 30 * 1000
 
@@ -592,7 +590,8 @@ function emptyNotice() {
 function readNotice(path, log) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
-    const shows = Number.isInteger(parsed?.shows) && parsed.shows >= 0 ? Math.min(parsed.shows, NOTICE_MAX_SHOWS) : 0
+    if (parsed?.version !== NOTICE_VERSION) return emptyNotice()
+    const shows = Number.isInteger(parsed?.shows) && parsed.shows >= 0 ? parsed.shows : 0
     const lastAt = Number.isFinite(parsed?.lastAt) && parsed.lastAt >= 0 ? parsed.lastAt : 0
     const closed = NOTICE_FINAL.has(parsed?.closed) ? parsed.closed : null
     return { version: NOTICE_VERSION, shows, lastAt, closed }
@@ -625,17 +624,15 @@ function writeNotice(path, notice, log) {
 /**
  * Decide whether the card is due, and say why.
  *
- * The order matters: a closed card stays closed whatever the counters say, and
- * a spent show budget outranks the cooldown so the reason reported to the
- * browser is the one that will not change on the next reload.
+ * Only an answer ends the card: `thanks` and `issue` both mean the message
+ * landed. Everything else asks again on the next page load — a budget counted
+ * in files outlives the plugin it belongs to, so the second install saw a card
+ * it had never been shown.
  * @param notice - stored notice document.
- * @param now - clock, injected for tests.
  * @returns `{ show, reason }` with a stable reason string.
  */
-export function noticeDecision(notice, now = Date.now()) {
+export function noticeDecision(notice) {
   if (notice?.closed === 'thanks' || notice?.closed === 'issue') return { show: false, reason: 'answered' }
-  if ((notice?.shows ?? 0) >= NOTICE_MAX_SHOWS) return { show: false, reason: 'capped' }
-  if (notice?.lastAt > 0 && now - notice.lastAt < NOTICE_COOLDOWN_MS) return { show: false, reason: 'cooling' }
   return { show: true, reason: (notice?.shows ?? 0) === 0 ? 'first' : 'again' }
 }
 
@@ -1113,7 +1110,7 @@ export function apply(ctx, config = {}) {
         if (noticeAnswer !== undefined && now - noticeAnswer.at < NOTICE_THROTTLE_MS) {
           return jsonResponse(noticeAnswer.body)
         }
-        const decision = noticeDecision(notice, now)
+        const decision = noticeDecision(notice)
         let body
         if (decision.show) {
           notice = { ...notice, shows: notice.shows + 1, lastAt: now }
@@ -1147,7 +1144,7 @@ export function apply(ctx, config = {}) {
         return jsonResponse({ ok: false, code: 'badAction', message: 'action 必须是 thanks / issue / later' }, 400)
       }
 
-      // "thanks" and "issue" close the card for good; "later" only restarts the cooldown.
+      // "thanks" and "issue" close the card for good; "later" only notes the visit.
       notice = action === 'later'
         ? { ...notice, lastAt: Date.now() }
         : { ...notice, closed: action }

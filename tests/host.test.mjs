@@ -354,7 +354,7 @@ test('an old dsh-market-ticker.json is adopted under the new file name', async (
   }
 })
 
-test('the thank-you card is offered once, then remembers the answer', async () => {
+test('the thank-you card is offered until it is answered', async () => {
   const home = mkdtempSync(join(tmpdir(), 'market-watching-notice-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = home
@@ -428,15 +428,14 @@ test('the notice route rejects answers it cannot understand', async () => {
   }
 })
 
-test('noticeDecision stops at the show budget and restarts after a cooldown', () => {
+test('noticeDecision asks until an answer closes it', () => {
   const now = 1_700_000_000_000
   const day = 24 * 60 * 60 * 1000
-  assert.deepEqual(noticeDecision({ shows: 0, lastAt: 0, closed: null }, now), { show: true, reason: 'first' })
-  assert.deepEqual(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: null }, now), { show: true, reason: 'again' })
-  assert.deepEqual(noticeDecision({ shows: 2, lastAt: now - 8 * day, closed: null }, now), { show: true, reason: 'again' })
-  assert.equal(noticeDecision({ shows: 1, lastAt: now - 1000, closed: null }, now).reason, 'cooling')
-  // The spent budget outranks the cooldown, so the reason does not flip on reload.
-  assert.equal(noticeDecision({ shows: 3, lastAt: now, closed: null }, now).reason, 'capped')
-  assert.equal(noticeDecision({ shows: 1, lastAt: 0, closed: 'issue' }, now).reason, 'answered')
-  assert.equal(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: 'thanks' }, now).reason, 'answered')
+  assert.deepEqual(noticeDecision({ shows: 0, lastAt: 0, closed: null }), { show: true, reason: 'first' })
+  assert.deepEqual(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: null }), { show: true, reason: 'again' })
+  // A recent showing is not a reason to hide: the file outlives the install.
+  assert.equal(noticeDecision({ shows: 1, lastAt: now - 1000, closed: null }).show, true)
+  assert.equal(noticeDecision({ shows: 3, lastAt: now, closed: null }).show, true)
+  assert.equal(noticeDecision({ shows: 1, lastAt: 0, closed: 'issue' }).reason, 'answered')
+  assert.equal(noticeDecision({ shows: 1, lastAt: now - 8 * day, closed: 'thanks' }).reason, 'answered')
 })

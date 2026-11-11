@@ -49,11 +49,11 @@ window.__ModuleLoader__.load({
      * it never races the sidebar's first paint, short enough to still feel like
      * a greeting rather than a delayed pop-up.
      */
-    const THANKS_DELAY_MS = 2400
+    const THANKS_DELAY_MS = 600
 
     /** While the operator is typing, the card keeps its distance and tries again. */
     const THANKS_IDLE_MS = 800
-    const THANKS_IDLE_TRIES = 12
+    const THANKS_IDLE_TRIES = 60
 
     /** Locale namespace this plugin owns; `apply` registers the dictionaries below. */
     const LOCALE_NAMESPACE = 'marketTicker'
@@ -2099,6 +2099,7 @@ window.__ModuleLoader__.load({
       let previous = null
       let unsubscribe = null
       let tries = 0
+      let watching = false
 
       const dismiss = (action) => {
         if (layer === null) return
@@ -2126,7 +2127,16 @@ window.__ModuleLoader__.load({
       }
 
       const attempt = async () => {
-        if (layer !== null || document.hidden === true) return
+        if (layer !== null) return
+        // A card painted into a hidden tab is never seen, so a hidden tab waits
+        // for the reader to come back instead of burning the visit.
+        if (document.hidden === true) {
+          if (!watching && typeof document.addEventListener === 'function') {
+            watching = true
+            document.addEventListener('visibilitychange', onVisible)
+          }
+          return
+        }
         if (isEditing()) {
           // Give the operator room to finish the sentence; past the budget the
           // card is simply skipped for this page load.
@@ -2136,8 +2146,23 @@ window.__ModuleLoader__.load({
           return
         }
         const decision = await fetchThanks()
+        // A blank answer means the host is still coming up: it is worth looking again.
+        if (decision === undefined) {
+          if (tries < THANKS_IDLE_TRIES) {
+            tries += 1
+            window.setTimeout(() => { void attempt() }, THANKS_IDLE_MS)
+          }
+          return
+        }
         if (decision?.show !== true || layer !== null || document.hidden === true) return
         reveal()
+      }
+
+      const onVisible = () => {
+        if (typeof document === 'undefined' || document.hidden === true) return
+        if (typeof document.removeEventListener === 'function') document.removeEventListener('visibilitychange', onVisible)
+        watching = false
+        void attempt()
       }
 
       window.setTimeout(() => { void attempt() }, THANKS_DELAY_MS)
